@@ -1,6 +1,6 @@
 # MCP Incident Commander (`mcp-incident-commander`)
 
-**FinOps & Cloud-Native Incident Commander**, yeni nesil **Stateless Model Context Protocol (`2026-07-28` spesifikasyonu)** standartlarını uygulayan, **AWS Application Load Balancer (ALB)** ve **AWS Lambda** üzerinde yatay ölçeklenebilir (ve ilerleyen aşamalarda kod değişikliği gerektirmeden Kubernetes/EKS üzerinde çalışabilir) production-ready bir Go projesidir.
+**FinOps & Cloud-Native Incident Commander**, yeni nesil **Stateless Model Context Protocol (`2026-07-28` spesifikasyonu)** standartlarını uygulayan, **AWS Application Load Balancer (ALB)** ve **AWS Lambda** üzerinde yatay ölçeklenebilir (ve ilerleyen aşamalarda kod değişikliği gerektirmeden Kubernetes/EKS üzerinde çalışabilir) örnek bir Go referans mimarisidir.
 
 ---
 
