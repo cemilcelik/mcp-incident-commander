@@ -1,0 +1,22 @@
+# Derleme çıktıları
+bin/
+bootstrap
+*.zip
+
+# Ortam ve gizli değişkenler
+.env
+.env.*
+
+# Terraform yerel durum ve önbellek dosyaları
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+crash.log
+*.tfvars
+
+# İşletim sistemi ve IDE dosyaları
+.DS_Store
+
+# Yerel ajan/skill yapılandırmaları
+.agents/
+skills-lock.json
