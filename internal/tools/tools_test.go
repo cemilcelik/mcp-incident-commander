@@ -1,9 +1,14 @@
 package tools
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"mcp-incident-commander/internal/mcp"
 	"mcp-incident-commander/internal/middleware"
@@ -145,4 +150,91 @@ func TestMitigationPlanTool_SEP2322MultiRoundTrip(t *testing.T) {
 		t.Fatalf("expected ErrCodeContinuationExpired on replay, got: %v", replayErr)
 	}
 }
+
+func TestLiveTelemetryTool_StreamableHTTPSSE(t *testing.T) {
+	t.Parallel()
+
+	sharedStore := store.NewInMemoryStore()
+	telemetryTool := NewLiveTelemetryTool(sharedStore, "lambda-instance-sse-1", 1*time.Millisecond)
+
+	// Edge case: Eksik target_service parametresi SSE akışı başlamadan önce -32602 dönmeli.
+	authCtx := middleware.WithIdentity(context.Background(), middleware.Identity{
+		TenantID:   "tenant-finops",
+		EngineerID: "eng-sre-9",
+	})
+	rec := httptest.NewRecorder()
+	preErr := telemetryTool.StreamExecute(authCtx, rec, "req-bad", "prog-1", json.RawMessage(`{"incident_id": "INC-905"}`))
+	if preErr == nil || preErr.Code != mcp.ErrCodeInvalidParams {
+		t.Fatalf("expected ErrCodeInvalidParams for missing target_service, got: %v", preErr)
+	}
+
+	// Happy path: httptest.NewServer üzerinden gerçek zamanlı Chunked SSE (%25, %50, %75, %100 + final message) okuma.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := middleware.WithIdentity(r.Context(), middleware.Identity{
+			TenantID:   "tenant-finops",
+			EngineerID: "eng-sre-9",
+		})
+		rpcErr := telemetryTool.StreamExecute(ctx, w, "req-sse-42", "prog-42", json.RawMessage(`{
+			"incident_id": "INC-2026-905",
+			"target_service": "checkout-payment-api",
+			"window_minutes": 30
+		}`))
+		if rpcErr != nil {
+			t.Errorf("unexpected StreamExecute error: %v", rpcErr)
+		}
+	}))
+	defer srv.Close()
+
+	resp, err := srv.Client().Post(srv.URL, "application/json", nil)
+	if err != nil {
+		t.Fatalf("failed to connect to SSE test server: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if gotCT := resp.Header.Get("Content-Type"); gotCT != ContentTypeEventStream {
+		t.Fatalf("expected Content-Type %q, got %q", ContentTypeEventStream, gotCT)
+	}
+
+	var (
+		progressValues []int
+		finalMessage   string
+	)
+
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		payload := strings.TrimPrefix(line, "data: ")
+		if strings.Contains(payload, `"method":"notifications/progress"`) {
+			var notif struct {
+				Params mcp.ProgressNotificationParams `json:"params"`
+			}
+			if err := json.Unmarshal([]byte(payload), &notif); err != nil {
+				t.Fatalf("failed to unmarshal progress notification: %v", err)
+			}
+			progressValues = append(progressValues, notif.Params.Progress)
+		} else if strings.Contains(payload, `"id":"req-sse-42"`) {
+			finalMessage = payload
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("scanner error while reading SSE stream: %v", err)
+	}
+
+	expectedProgress := []int{25, 50, 75, 100}
+	if len(progressValues) != len(expectedProgress) {
+		t.Fatalf("expected %v progress stages, got %v", expectedProgress, progressValues)
+	}
+	for i, want := range expectedProgress {
+		if progressValues[i] != want {
+			t.Fatalf("stage %d: expected %d%%, got %d%%", i, want, progressValues[i])
+		}
+	}
+	if !strings.Contains(finalMessage, `"status":"completed"`) || !strings.Contains(finalMessage, "checkout-payment-api") {
+		t.Fatalf("unexpected final SSE JSON-RPC response: %s", finalMessage)
+	}
+}
+
 
